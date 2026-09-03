@@ -40,6 +40,8 @@ operations without requiring a full graphical display settings application.
 
 - `notify-send`
 - Ghostty for the example launcher configuration
+- Waybar for the example panel integration
+- Font Awesome or a Nerd Font for the example Waybar icon
 
 ## Fedora
 
@@ -57,11 +59,48 @@ cd swaydeck
 ./install.sh
 ```
 
+The installer places SwayDeck at:
+
+```text
+~/.local/bin/swaydeck
+```
+
+When `~/.local/bin/displayctl` is unused, the installer also creates a
+compatibility symlink:
+
+```text
+~/.local/bin/displayctl -> ~/.local/bin/swaydeck
+```
+
+An existing `displayctl` file or unrelated symlink is never overwritten.
+
 Then run:
 
 ```bash
 swaydeck
 ```
+
+If `~/.local/bin` is not in your `PATH`, run:
+
+```bash
+~/.local/bin/swaydeck
+```
+
+The installer does not modify your Sway or Waybar configuration.
+
+## Uninstallation
+
+From the cloned repository:
+
+```bash
+./uninstall.sh
+```
+
+The uninstaller removes the SwayDeck executable and its compatibility symlink when applicable.
+
+Existing unrelated `displayctl` files or symlinks are never removed.
+
+Sway and Waybar configuration are intentionally left unchanged.
 
 ## Keyboard workflow
 
