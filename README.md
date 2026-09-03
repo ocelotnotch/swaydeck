@@ -1,6 +1,6 @@
 # SwayDeck
 
-**Keyboard-first TUI display manager for Sway.**
+**TUI display manager for Sway.**
 
 ![SwayDeck TUI](docs/assets/swaydeck-main.png)
 
@@ -17,7 +17,7 @@ operations without requiring a full graphical display settings application.
 - Per-display scaling
 - Landscape and portrait orientation
 - Multi-monitor aware
-- Keyboard-first `fzf` interface
+- Interactive `fzf` interface
 - Terminal-native transparent background
 - Tokyo Night-inspired foreground palette
 - Optional Waybar integration
