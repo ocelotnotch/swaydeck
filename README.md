@@ -2,6 +2,8 @@
 
 **Keyboard-first TUI display manager for Sway.**
 
+![SwayDeck TUI](docs/assets/swaydeck-main.png)
+
 SwayDeck provides a compact terminal interface for common multi-monitor
 operations without requiring a full graphical display settings application.
 
