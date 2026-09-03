@@ -1,0 +1,12 @@
+{
+  "modules-right": [
+    "custom/swaydeck"
+  ],
+
+  "custom/swaydeck": {
+    "format": "\uf108",
+    "tooltip": true,
+    "tooltip-format": "SwayDeck  •  Super+P",
+    "on-click": "ghostty -e ~/.local/bin/swaydeck"
+  }
+}

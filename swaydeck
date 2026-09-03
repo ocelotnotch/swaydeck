@@ -1,0 +1,1661 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+APP_ID="swaydeck"
+APP_NAME="SwayDeck"
+# Keep a stable terminal title instead of exposing helper
+# processes such as awk/fzf in Ghostty's title bar.
+printf ']0;SwayDeck'
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/${APP_ID}-${UID}"
+PID_FILE="$STATE_DIR/wl-mirror.pids"
+
+mkdir -p "$STATE_DIR"
+
+STATUS="Ready"
+LAST_ERROR=""
+
+# Tokyo Night Light foreground palette.
+# Background intentionally inherits terminal/Ghostty transparency.
+FZF_THEME=(
+  --height=90%
+  --layout=reverse
+  --border=rounded
+  --cycle
+  --no-multi
+  --no-sort
+  --exact
+  --nth=1
+  --info=inline-right
+  --prompt='> '
+  --pointer='▶'
+  --color='fg:#565a6e,fg+:#34548a:bold,hl:#5a4a78,hl+:#34548a:bold,info:#9699a3,prompt:#34548a:bold,pointer:#34548a:bold,header:#343b58,border:#9699a3,bg:-1,bg+:-1,gutter:-1'
+)
+
+# ------------------------------------------------------------
+# Dependency check
+# ------------------------------------------------------------
+
+for cmd in swaymsg jq fzf; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    printf 'Missing dependency: %s\n' "$cmd" >&2
+    exit 127
+  fi
+done
+
+# ------------------------------------------------------------
+# Basic helpers
+# ------------------------------------------------------------
+
+notify() {
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send \
+      -a "$APP_NAME" \
+      "Display" \
+      "$1" \
+      >/dev/null 2>&1 || true
+  fi
+}
+
+settle() {
+  sleep 0.15
+}
+
+outputs_json() {
+  swaymsg \
+    -t get_outputs \
+    -r \
+    2>/dev/null
+}
+
+primary_output() {
+  local data="$1"
+
+  # Explicit override:
+  # DISPLAYCTL_PRIMARY=DP-1 displayctl
+  if [[ -n "${DISPLAYCTL_PRIMARY:-}" ]]; then
+    if jq -e \
+      --arg name "$DISPLAYCTL_PRIMARY" \
+      '.[] | select(.name == $name)' \
+      <<<"$data" >/dev/null; then
+
+      printf '%s\n' "$DISPLAYCTL_PRIMARY"
+      return
+    fi
+  fi
+
+  jq -r '
+    (
+      [.[] | select(.name | startswith("eDP-"))][0].name
+    )
+    //
+    (
+      [.[] | select(.active == true)][0].name
+    )
+    //
+    (
+      .[0].name
+    )
+    //
+    empty
+  ' <<<"$data"
+}
+
+external_outputs() {
+  local data="$1"
+  local primary="$2"
+
+  jq -r \
+    --arg primary "$primary" '
+      .[]
+      | select(.name != $primary)
+      | .name
+    ' <<<"$data"
+}
+
+active_outputs() {
+  local data="$1"
+
+  jq -r '
+    .[]
+    | select(.active == true)
+    | .name
+  ' <<<"$data"
+}
+
+rect() {
+  local output="$1"
+
+  outputs_json |
+    jq -r \
+      --arg name "$output" '
+        .[]
+        | select(.name == $name)
+        | [
+            .rect.x,
+            .rect.y,
+            .rect.width,
+            .rect.height
+          ]
+        | @tsv
+      '
+}
+
+summary() {
+  local data="$1"
+  local primary="$2"
+
+  local role
+  local name
+  local state
+  local geometry
+  local scale
+  local transform
+
+  while IFS=$'\t' read -r \
+    role \
+    name \
+    state \
+    geometry \
+    scale \
+    transform
+  do
+    printf '%-8s  %-12s  %-6s  %-23s %s | %s\n' \
+      "$role" \
+      "$name" \
+      "$state" \
+      "$geometry" \
+      "$scale" \
+      "$transform"
+
+  done < <(
+    jq -r \
+      --arg primary "$primary" '
+        .[]
+        |
+        [
+          (
+            if .name == $primary
+            then "PRIMARY"
+            else "EXTERNAL"
+            end
+          ),
+          .name,
+          (
+            if .active
+            then "ACTIVE"
+            else "OFF"
+            end
+          ),
+          (
+            if .active
+            then
+              "\(.rect.width)x\(.rect.height) @ \(.rect.x),\(.rect.y)"
+            else
+              "-"
+            end
+          ),
+          "scale \(.scale)",
+          "transform \(.transform // "normal")"
+        ]
+        | @tsv
+      ' <<<"$data"
+  )
+}
+
+# ------------------------------------------------------------
+# Safe Sway command execution
+# ------------------------------------------------------------
+
+sway_cmd() {
+  local command="$1"
+  local error=""
+
+  LAST_ERROR=""
+
+  if ! error="$(
+    swaymsg \
+      -q \
+      -- \
+      "$command" \
+      2>&1
+  )"; then
+
+    LAST_ERROR="${error:-Sway rejected the command}"
+    return 1
+  fi
+
+  return 0
+}
+
+enable_output() {
+  sway_cmd "output $1 enable"
+}
+
+disable_output() {
+  sway_cmd "output $1 disable"
+}
+
+position_output() {
+  local output="$1"
+  local x="$2"
+  local y="$3"
+
+  sway_cmd \
+    "output $output position $x $y"
+}
+
+
+scale_output() {
+  local output="$1"
+  local scale="$2"
+
+  sway_cmd \
+    "output $output scale $scale"
+}
+
+transform_output() {
+  local output="$1"
+  local transform="$2"
+
+  sway_cmd \
+    "output $output transform $transform"
+}
+
+# ------------------------------------------------------------
+# TUI selector
+#
+# Every item begins with its keyboard shortcut.
+#
+# Example:
+#   3  Extend
+#
+# Because fzf searches only field 1 (--nth=1):
+#
+#   type 3
+#   Enter
+#
+# deterministically chooses Extend.
+# ------------------------------------------------------------
+
+choose() {
+  local prompt="$1"
+  local header="$2"
+
+  shift 2
+
+  printf '%s\n' "$@" |
+    fzf \
+      "${FZF_THEME[@]}" \
+      --prompt="$prompt" \
+      --header="$header"
+}
+
+choice_key() {
+  printf '%s\n' "$1" |
+    awk '{print $1}'
+}
+
+choice_value() {
+  printf '%s\n' "$1" |
+    sed 's/^[^ ]*  *//'
+}
+
+numbered_menu() {
+  local i=1
+  local item
+
+  for item in "$@"; do
+    printf '%d  %s\n' "$i" "$item"
+    ((i++))
+  done
+}
+
+# ------------------------------------------------------------
+# wl-mirror
+# ------------------------------------------------------------
+
+mirror_alive() {
+  [[ -s "$PID_FILE" ]] || return 1
+
+  local pid
+  local cmdline
+
+  while read -r pid; do
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+
+    cmdline="$(
+      tr '\0' ' ' \
+        < "/proc/$pid/cmdline" \
+        2>/dev/null || true
+    )"
+
+    if [[ "$cmdline" == *wl-mirror* ]]; then
+      return 0
+    fi
+
+  done < "$PID_FILE"
+
+  return 1
+}
+
+stop_mirror() {
+  [[ -f "$PID_FILE" ]] || return 0
+
+  local pid
+  local cmdline
+
+  while read -r pid; do
+
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -0 "$pid" 2>/dev/null || continue
+
+    cmdline="$(
+      tr '\0' ' ' \
+        < "/proc/$pid/cmdline" \
+        2>/dev/null || true
+    )"
+
+    if [[ "$cmdline" == *wl-mirror* ]]; then
+      kill "$pid" 2>/dev/null || true
+    fi
+
+  done < "$PID_FILE"
+
+  rm -f "$PID_FILE"
+}
+
+# ------------------------------------------------------------
+# Current projection mode
+# ------------------------------------------------------------
+
+current_mode() {
+  local data="$1"
+  local primary="$2"
+
+  local active_count
+  local primary_active=0
+
+  if mirror_alive; then
+    printf 'Duplicate\n'
+    return
+  fi
+
+  active_count="$(
+    jq '
+      [.[] | select(.active == true)]
+      | length
+    ' <<<"$data"
+  )"
+
+  if jq -e \
+    --arg primary "$primary" '
+      .[]
+      | select(
+          .name == $primary
+          and
+          .active == true
+        )
+    ' <<<"$data" >/dev/null; then
+
+    primary_active=1
+  fi
+
+  if (( active_count == 1 && primary_active == 1 )); then
+    printf 'PC screen only\n'
+
+  elif (( active_count == 1 && primary_active == 0 )); then
+    printf 'Second screen only\n'
+
+  elif (( active_count >= 2 )); then
+    printf 'Extend\n'
+
+  else
+    printf 'Unknown\n'
+  fi
+}
+
+# ------------------------------------------------------------
+# PC screen only
+# ------------------------------------------------------------
+
+pc_only() {
+  stop_mirror
+
+  local data
+  local primary
+  local output
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  if ! enable_output "$primary"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  if ! position_output "$primary" 0 0; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  while read -r output; do
+    [[ -n "$output" ]] || continue
+
+    if ! disable_output "$output"; then
+      STATUS="ERROR: $LAST_ERROR"
+      return
+    fi
+
+  done < <(
+    external_outputs "$data" "$primary"
+  )
+
+  settle
+
+  STATUS="✓ PC screen only applied"
+  notify "PC screen only — $primary"
+}
+
+# ------------------------------------------------------------
+# Select external output
+# ------------------------------------------------------------
+
+pick_external() {
+  local data="$1"
+  local primary="$2"
+
+  local -a outputs
+  local -a options
+
+  local item
+  local selection
+
+  mapfile -t outputs < <(
+    external_outputs "$data" "$primary"
+  )
+
+  (( ${#outputs[@]} > 0 )) || return 1
+
+  if (( ${#outputs[@]} == 1 )); then
+    printf '%s\n' "${outputs[0]}"
+    return
+  fi
+
+  mapfile -t options < <(
+    numbered_menu "${outputs[@]}"
+  )
+
+  selection="$(
+    choose \
+      'External > ' \
+      'Type number + Enter' \
+      "${options[@]}"
+  )" || return 1
+
+  choice_value "$selection"
+}
+
+# ------------------------------------------------------------
+# Second screen only
+# ------------------------------------------------------------
+
+second_only() {
+  stop_mirror
+
+  local data
+  local primary
+  local target
+  local output
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  target="$(
+    pick_external \
+      "$data" \
+      "$primary"
+  )" || {
+    STATUS="No external display detected"
+    return
+  }
+
+  [[ -n "$target" ]] || return
+
+  # Always enable destination before disabling primary.
+  if ! enable_output "$target"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  if ! position_output "$target" 0 0; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  while read -r output; do
+
+    [[ -n "$output" ]] || continue
+    [[ "$output" == "$target" ]] && continue
+
+    if ! disable_output "$output"; then
+      STATUS="ERROR: $LAST_ERROR"
+      return
+    fi
+
+  done < <(
+    external_outputs "$data" "$primary"
+  )
+
+  if ! disable_output "$primary"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  settle
+
+  STATUS="✓ Second screen only: $target"
+  notify "Second screen only — $target"
+}
+
+# ------------------------------------------------------------
+# Enable all displays without changing their positions
+# ------------------------------------------------------------
+
+enable_all() {
+  stop_mirror
+
+  local data
+  local primary
+  local output
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  if ! enable_output "$primary"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  while read -r output; do
+    [[ -n "$output" ]] || continue
+
+    if ! enable_output "$output"; then
+      STATUS="ERROR: $LAST_ERROR"
+      return 1
+    fi
+
+  done < <(
+    external_outputs "$data" "$primary"
+  )
+
+  settle
+
+  return 0
+}
+
+# ------------------------------------------------------------
+# Extend: enable all + deterministic right chain
+# ------------------------------------------------------------
+
+extend_right() {
+  stop_mirror
+
+  local silent="${1:-0}"
+
+  local data
+  local primary
+  local output
+
+  local x=0
+  local rx
+  local ry
+  local rw
+  local rh
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  # Enable everything first.
+  if ! enable_output "$primary"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  while read -r output; do
+
+    [[ -n "$output" ]] || continue
+
+    if ! enable_output "$output"; then
+      STATUS="ERROR: $LAST_ERROR"
+      return 1
+    fi
+
+  done < <(
+    external_outputs "$data" "$primary"
+  )
+
+  settle
+
+  # Refresh dimensions after all displays are enabled.
+  data="$(outputs_json)"
+
+  if ! position_output "$primary" 0 0; then
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  read -r rx ry rw rh < <(
+    rect "$primary"
+  )
+
+  x="$rw"
+
+  while read -r output; do
+
+    [[ -n "$output" ]] || continue
+
+    if ! position_output "$output" "$x" 0; then
+      STATUS="ERROR: $LAST_ERROR"
+      return 1
+    fi
+
+    settle
+
+    read -r rx ry rw rh < <(
+      rect "$output"
+    )
+
+    x=$((x + rw))
+
+  done < <(
+    external_outputs \
+      "$(outputs_json)" \
+      "$primary"
+  )
+
+  settle
+
+  if (( silent == 0 )); then
+    STATUS="✓ Extend: displays arranged to the right"
+    notify "Extend — displays arranged to the right"
+  fi
+
+  return 0
+}
+
+# ------------------------------------------------------------
+# Absolute two-monitor arrangement
+#
+# Avoid negative coordinates entirely.
+#
+# RIGHT:
+#
+#   PRIMARY | TARGET
+#
+# LEFT:
+#
+#   TARGET | PRIMARY
+#
+# ABOVE:
+#
+#   TARGET
+#   PRIMARY
+#
+# BELOW:
+#
+#   PRIMARY
+#   TARGET
+# ------------------------------------------------------------
+
+arrange_two() {
+  local primary="$1"
+  local target="$2"
+  local direction="$3"
+
+  local px
+  local py
+  local pw
+  local ph
+
+  local tx
+  local ty
+  local tw
+  local th
+
+  read -r px py pw ph < <(
+    rect "$primary"
+  )
+
+  read -r tx ty tw th < <(
+    rect "$target"
+  )
+
+  case "$direction" in
+
+    Right)
+      # Primary starts at origin.
+      position_output "$primary" 0 0 || return 1
+      position_output "$target" "$pw" 0 || return 1
+      ;;
+
+    Left)
+      # Target starts at origin.
+      position_output "$target" 0 0 || return 1
+      position_output "$primary" "$tw" 0 || return 1
+      ;;
+
+    Above)
+      # Proven working layout on Sway:
+      #
+      # target  0,0
+      # primary 0,target_height
+      position_output "$target" 0 0 || return 1
+      position_output "$primary" 0 "$th" || return 1
+      ;;
+
+    Below)
+      position_output "$primary" 0 0 || return 1
+      position_output "$target" 0 "$ph" || return 1
+      ;;
+
+    *)
+      return 1
+      ;;
+
+  esac
+
+  settle
+}
+
+# ------------------------------------------------------------
+# Generic 3+ display positioning
+# ------------------------------------------------------------
+
+arrange_multi() {
+  local target="$1"
+  local anchor="$2"
+  local direction="$3"
+
+  local data
+
+  local tx
+  local ty
+  local tw
+  local th
+
+  local ax
+  local ay
+  local aw
+  local ah
+
+  local new_tx
+  local new_ty
+
+  local min_x=0
+  local min_y=0
+
+  local name
+  local x
+  local y
+  local w
+  local h
+
+  local shift_x=0
+  local shift_y=0
+
+  local -a names
+  declare -A xs
+  declare -A ys
+  declare -A ws
+  declare -A hs
+
+  data="$(outputs_json)"
+
+  while IFS=$'\t' read -r name x y w h; do
+
+    names+=("$name")
+
+    xs["$name"]="$x"
+    ys["$name"]="$y"
+    ws["$name"]="$w"
+    hs["$name"]="$h"
+
+  done < <(
+    jq -r '
+      .[]
+      | select(.active == true)
+      | [
+          .name,
+          .rect.x,
+          .rect.y,
+          .rect.width,
+          .rect.height
+        ]
+      | @tsv
+    ' <<<"$data"
+  )
+
+  tx="${xs[$target]}"
+  ty="${ys[$target]}"
+  tw="${ws[$target]}"
+  th="${hs[$target]}"
+
+  ax="${xs[$anchor]}"
+  ay="${ys[$anchor]}"
+  aw="${ws[$anchor]}"
+  ah="${hs[$anchor]}"
+
+  case "$direction" in
+    Right)
+      new_tx=$((ax + aw))
+      new_ty="$ay"
+      ;;
+
+    Left)
+      new_tx=$((ax - tw))
+      new_ty="$ay"
+      ;;
+
+    Above)
+      new_tx="$ax"
+      new_ty=$((ay - th))
+      ;;
+
+    Below)
+      new_tx="$ax"
+      new_ty=$((ay + ah))
+      ;;
+  esac
+
+  xs["$target"]="$new_tx"
+  ys["$target"]="$new_ty"
+
+  # Determine whether the whole canvas needs shifting.
+  min_x="${xs[${names[0]}]}"
+  min_y="${ys[${names[0]}]}"
+
+  for name in "${names[@]}"; do
+
+    (( xs["$name"] < min_x )) &&
+      min_x="${xs[$name]}"
+
+    (( ys["$name"] < min_y )) &&
+      min_y="${ys[$name]}"
+
+  done
+
+  (( min_x < 0 )) &&
+    shift_x=$((-min_x))
+
+  (( min_y < 0 )) &&
+    shift_y=$((-min_y))
+
+  # Apply final absolute coordinates to EVERY active display.
+  #
+  # This avoids leaving one display behind in negative space.
+  for name in "${names[@]}"; do
+
+    x=$(( xs["$name"] + shift_x ))
+    y=$(( ys["$name"] + shift_y ))
+
+    if ! position_output "$name" "$x" "$y"; then
+      return 1
+    fi
+
+  done
+
+  settle
+}
+
+# ------------------------------------------------------------
+# Arrange displays
+# ------------------------------------------------------------
+
+arrange() {
+  local data
+  local primary
+
+  local target
+  local anchor
+  local direction
+
+  local selection
+  local output
+
+  local -a active
+  local -a movable
+  local -a anchors
+  local -a options
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  mapfile -t active < <(
+    active_outputs "$data"
+  )
+
+  if (( ${#active[@]} < 2 )); then
+    STATUS="Enable Extend first"
+    return
+  fi
+
+  mapfile -t movable < <(
+    printf '%s\n' "${active[@]}" |
+      grep -Fxv "$primary" || true
+  )
+
+  (( ${#movable[@]} > 0 )) || {
+    STATUS="No external display active"
+    return
+  }
+
+  # Two-monitor workflow:
+  #
+  # 3 Enter
+  # a Enter
+  # 3 Enter
+  #
+  # No unnecessary target/anchor selection.
+  if (( ${#active[@]} == 2 && ${#movable[@]} == 1 )); then
+
+    target="${movable[0]}"
+    anchor="$primary"
+
+  else
+
+    mapfile -t options < <(
+      numbered_menu "${movable[@]}"
+    )
+
+    selection="$(
+      choose \
+        'Move > ' \
+        'Select display to move: type number + Enter' \
+        "${options[@]}"
+    )" || return
+
+    target="$(choice_value "$selection")"
+
+    mapfile -t anchors < <(
+      printf '%s\n' "${active[@]}" |
+        grep -Fxv "$target" || true
+    )
+
+    mapfile -t options < <(
+      numbered_menu "${anchors[@]}"
+    )
+
+    selection="$(
+      choose \
+        'Relative > ' \
+        "Move $target relative to:" \
+        "${options[@]}"
+    )" || return
+
+    anchor="$(choice_value "$selection")"
+  fi
+
+  selection="$(
+    choose \
+      'Position > ' \
+      "$target relative to $anchor | Type number + Enter" \
+      '1  Right' \
+      '2  Left' \
+      '3  Above' \
+      '4  Below'
+  )" || return
+
+  direction="$(choice_value "$selection")"
+
+  if (( ${#active[@]} == 2 )); then
+
+    if ! arrange_two \
+      "$anchor" \
+      "$target" \
+      "$direction"; then
+
+      STATUS="ERROR: ${LAST_ERROR:-Unable to arrange displays}"
+      return
+    fi
+
+  else
+
+    if ! arrange_multi \
+      "$target" \
+      "$anchor" \
+      "$direction"; then
+
+      STATUS="ERROR: ${LAST_ERROR:-Unable to arrange displays}"
+      return
+    fi
+
+  fi
+
+  STATUS="✓ $target → $direction of $anchor"
+  notify "$target → $direction of $anchor"
+}
+
+# ------------------------------------------------------------
+# Extend menu
+# ------------------------------------------------------------
+
+extend_menu() {
+  local data
+  local primary
+  local selection
+  local key
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  if [[ -z "$(
+    external_outputs \
+      "$data" \
+      "$primary"
+  )" ]]; then
+
+    STATUS="No external display detected"
+    return
+  fi
+
+  selection="$(
+    choose \
+      'Extend > ' \
+      'Type shortcut + Enter' \
+      'a  Extend + arrange position' \
+      'r  Extend + reset all to the right'
+  )" || return
+
+  key="$(choice_key "$selection")"
+
+  case "$key" in
+
+    a)
+      # Enable all displays, but DO NOT change their positions yet.
+      # The layout is applied only after the user chooses
+      # Right / Left / Above / Below.
+      if enable_all; then
+        arrange
+      fi
+      ;;
+
+    r)
+      extend_right 0
+      ;;
+
+  esac
+}
+
+# ------------------------------------------------------------
+# Duplicate
+# ------------------------------------------------------------
+
+duplicate() {
+  stop_mirror
+
+  if ! command -v wl-mirror >/dev/null 2>&1; then
+    STATUS="wl-mirror is not installed"
+    return
+  fi
+
+  local data
+  local primary
+  local output
+  local pid
+
+  local -a externals
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  mapfile -t externals < <(
+    external_outputs \
+      "$data" \
+      "$primary"
+  )
+
+  if (( ${#externals[@]} == 0 )); then
+    STATUS="No external display detected"
+    return
+  fi
+
+  # wl-mirror requires actual enabled outputs underneath.
+  if ! extend_right 1; then
+    return
+  fi
+
+  : > "$PID_FILE"
+
+  for output in "${externals[@]}"; do
+
+    wl-mirror \
+      --fullscreen-output "$output" \
+      --fullscreen \
+      "$primary" \
+      >/dev/null 2>&1 &
+
+    pid=$!
+
+    printf '%s\n' "$pid" >> "$PID_FILE"
+
+  done
+
+  sleep 0.2
+
+  if mirror_alive; then
+
+    STATUS="✓ Duplicate: $primary → ${#externals[@]} external display(s)"
+    notify "Duplicate — $primary"
+
+  else
+
+    rm -f "$PID_FILE"
+
+    STATUS="ERROR: wl-mirror failed to start"
+  fi
+}
+
+# ------------------------------------------------------------
+# Display settings
+# ------------------------------------------------------------
+
+transform_label() {
+  case "$1" in
+    normal) printf 'Landscape\n' ;;
+    90)     printf 'Portrait\n' ;;
+    180)    printf 'Landscape flipped\n' ;;
+    270)    printf 'Portrait flipped\n' ;;
+    *)      printf '%s\n' "$1" ;;
+  esac
+}
+
+pick_active_output() {
+  local data="$1"
+  local selection
+
+  local -a displays
+  local -a options
+
+  mapfile -t displays < <(
+    active_outputs "$data"
+  )
+
+  (( ${#displays[@]} > 0 )) || return 1
+
+  if (( ${#displays[@]} == 1 )); then
+    printf '%s\n' "${displays[0]}"
+    return
+  fi
+
+  mapfile -t options < <(
+    numbered_menu "${displays[@]}"
+  )
+
+  selection="$(
+    choose \
+      'Display > ' \
+      'Select active display | Type number + Enter' \
+      "${options[@]}"
+  )" || return 1
+
+  choice_value "$selection"
+}
+
+# Detect the current relationship of an external display
+# relative to the primary display.
+two_layout_direction() {
+  local primary="$1"
+  local target="$2"
+
+  local px py pw ph
+  local tx ty tw th
+
+  local pcx pcy
+  local tcx tcy
+  local dx dy
+  local adx ady
+
+  read -r px py pw ph < <(
+    rect "$primary"
+  )
+
+  read -r tx ty tw th < <(
+    rect "$target"
+  )
+
+  if (( tx >= px + pw )); then
+    printf 'Right\n'
+    return
+
+  elif (( px >= tx + tw )); then
+    printf 'Left\n'
+    return
+
+  elif (( ty >= py + ph )); then
+    printf 'Below\n'
+    return
+
+  elif (( py >= ty + th )); then
+    printf 'Above\n'
+    return
+  fi
+
+  # Fallback for offset layouts.
+  pcx=$((px + pw / 2))
+  pcy=$((py + ph / 2))
+  tcx=$((tx + tw / 2))
+  tcy=$((ty + th / 2))
+
+  dx=$((tcx - pcx))
+  dy=$((tcy - pcy))
+
+  adx="$dx"
+  ady="$dy"
+
+  (( adx < 0 )) && adx=$((-adx))
+  (( ady < 0 )) && ady=$((-ady))
+
+  if (( adx >= ady )); then
+    if (( dx >= 0 )); then
+      printf 'Right\n'
+    else
+      printf 'Left\n'
+    fi
+  else
+    if (( dy >= 0 )); then
+      printf 'Below\n'
+    else
+      printf 'Above\n'
+    fi
+  fi
+}
+
+# For a standard two-monitor setup, remember the current
+# direction before scale/orientation changes logical dimensions.
+two_layout_context() {
+  local data
+  local primary
+  local external
+  local direction
+
+  local -a active
+  local -a externals
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  mapfile -t active < <(
+    active_outputs "$data"
+  )
+
+  (( ${#active[@]} == 2 )) || return 1
+
+  if ! printf '%s\n' "${active[@]}" |
+       grep -Fxq "$primary"; then
+    return 1
+  fi
+
+  mapfile -t externals < <(
+    printf '%s\n' "${active[@]}" |
+      grep -Fxv "$primary" || true
+  )
+
+  (( ${#externals[@]} == 1 )) || return 1
+
+  external="${externals[0]}"
+
+  direction="$(
+    two_layout_direction \
+      "$primary" \
+      "$external"
+  )"
+
+  printf '%s\t%s\n' \
+    "$external" \
+    "$direction"
+}
+
+restore_two_layout() {
+  local context="$1"
+
+  local data
+  local primary
+  local external
+  local direction
+
+  [[ -n "$context" ]] || return 0
+
+  IFS=$'\t' read -r external direction <<<"$context"
+
+  [[ -n "$external" && -n "$direction" ]] || return 0
+
+  data="$(outputs_json)"
+  primary="$(primary_output "$data")"
+
+  arrange_two \
+    "$primary" \
+    "$external" \
+    "$direction"
+}
+
+set_display_scale() {
+  local target="$1"
+
+  local data
+  local current
+  local selection
+  local scale
+  local context=""
+
+  data="$(outputs_json)"
+
+  current="$(
+    jq -r \
+      --arg name "$target" '
+        .[]
+        | select(.name == $name)
+        | .scale
+      ' <<<"$data"
+  )"
+
+  selection="$(
+    choose \
+      'Scale > ' \
+      "$target | Current: ${current}x | Type number + Enter" \
+      '1  1.00x' \
+      '2  1.25x' \
+      '3  1.50x' \
+      '4  1.75x' \
+      '5  2.00x' \
+      '6  2.25x' \
+      '7  2.50x' \
+      '8  3.00x'
+  )" || return
+
+  scale="$(
+    choice_value "$selection"
+  )"
+
+  scale="${scale%x}"
+
+  context="$(
+    two_layout_context 2>/dev/null || true
+  )"
+
+  if ! scale_output "$target" "$scale"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  settle
+
+  if [[ -n "$context" ]]; then
+    if ! restore_two_layout "$context"; then
+      STATUS="ERROR: ${LAST_ERROR:-Unable to restore display layout}"
+      return
+    fi
+  fi
+
+  settle
+
+  STATUS="✓ $target scale → ${scale}x"
+  notify "$target scale → ${scale}x"
+}
+
+set_display_orientation() {
+  local target="$1"
+
+  local data
+  local current_transform
+  local current_label
+
+  local selection
+  local key
+  local transform
+  local label
+
+  local context=""
+
+  data="$(outputs_json)"
+
+  current_transform="$(
+    jq -r \
+      --arg name "$target" '
+        .[]
+        | select(.name == $name)
+        | (.transform // "normal")
+      ' <<<"$data"
+  )"
+
+  current_label="$(
+    transform_label "$current_transform"
+  )"
+
+  selection="$(
+    choose \
+      'Orientation > ' \
+      "$target | Current: $current_label | Type number + Enter" \
+      '1  Landscape' \
+      '2  Portrait' \
+      '3  Landscape flipped' \
+      '4  Portrait flipped'
+  )" || return
+
+  key="$(
+    choice_key "$selection"
+  )"
+
+  case "$key" in
+    1)
+      transform="normal"
+      label="Landscape"
+      ;;
+    2)
+      transform="90"
+      label="Portrait"
+      ;;
+    3)
+      transform="180"
+      label="Landscape flipped"
+      ;;
+    4)
+      transform="270"
+      label="Portrait flipped"
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  context="$(
+    two_layout_context 2>/dev/null || true
+  )"
+
+  if ! transform_output "$target" "$transform"; then
+    STATUS="ERROR: $LAST_ERROR"
+    return
+  fi
+
+  settle
+
+  if [[ -n "$context" ]]; then
+    if ! restore_two_layout "$context"; then
+      STATUS="ERROR: ${LAST_ERROR:-Unable to restore display layout}"
+      return
+    fi
+  fi
+
+  settle
+
+  STATUS="✓ $target orientation → $label"
+  notify "$target orientation → $label"
+}
+
+display_settings() {
+  local data
+  local target
+
+  local current_scale
+  local current_transform
+  local current_orientation
+
+  local selection
+  local key
+
+  if mirror_alive; then
+    STATUS="Switch out of Duplicate before changing display settings"
+    return
+  fi
+
+  data="$(outputs_json)"
+
+  target="$(
+    pick_active_output "$data"
+  )" || {
+    STATUS="No active display detected"
+    return
+  }
+
+  [[ -n "$target" ]] || return
+
+  data="$(outputs_json)"
+
+  current_scale="$(
+    jq -r \
+      --arg name "$target" '
+        .[]
+        | select(.name == $name)
+        | .scale
+      ' <<<"$data"
+  )"
+
+  current_transform="$(
+    jq -r \
+      --arg name "$target" '
+        .[]
+        | select(.name == $name)
+        | (.transform // "normal")
+      ' <<<"$data"
+  )"
+
+  current_orientation="$(
+    transform_label "$current_transform"
+  )"
+
+  selection="$(
+    choose \
+      'Settings > ' \
+      "$target | Scale: ${current_scale}x | Orientation: $current_orientation" \
+      '1  Scale' \
+      '2  Orientation' \
+      'b  Back'
+  )" || return
+
+  key="$(
+    choice_key "$selection"
+  )"
+
+  case "$key" in
+    1)
+      set_display_scale "$target"
+      ;;
+    2)
+      set_display_orientation "$target"
+      ;;
+    b)
+      return
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+
+main() {
+  local data
+  local primary
+  local mode
+  local header
+
+  local selection
+  local key
+
+  while true; do
+
+    data="$(outputs_json)"
+    primary="$(primary_output "$data")"
+
+    if [[ -z "$primary" ]]; then
+      printf 'No Sway outputs detected.\n' >&2
+      exit 1
+    fi
+
+    mode="$(current_mode "$data" "$primary")"
+
+    header="$(
+      printf '%s\n\n%s\n\n%s\n\nStatus: %s' \
+        "$APP_NAME" \
+        "Mode: $mode  |  Primary: $primary" \
+        "$(summary "$data" "$primary")" \
+        "$STATUS"
+    )"
+
+    selection="$(
+      choose \
+        'Display > ' \
+        "$header" \
+        '1  PC screen only' \
+        '2  Duplicate' \
+        '3  Extend' \
+        '4  Second screen only' \
+        '5  Display settings' \
+        'q  Exit'
+    )" || exit 0
+
+    key="$(choice_key "$selection")"
+
+    case "$key" in
+
+      1)
+        pc_only
+        ;;
+
+      2)
+        duplicate
+        ;;
+
+      3)
+        extend_menu
+        ;;
+
+      4)
+        second_only
+        ;;
+
+      5)
+        display_settings
+        ;;
+
+      q)
+        exit 0
+        ;;
+
+    esac
+
+    # IMPORTANT:
+    #
+    # No exit here.
+    #
+    # Every completed action returns to the beginning
+    # of this loop and redraws the main menu.
+    settle
+
+  done
+}
+
+main

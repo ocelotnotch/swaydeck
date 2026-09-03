@@ -1,0 +1,13 @@
+#custom-swaydeck {
+    background: #1f2335;
+    color: #7aa2f7;
+
+    border-radius: 12px;
+
+    padding: 0 10px;
+    margin: 4px 3px;
+}
+
+#custom-swaydeck:hover {
+    color: #7dcfff;
+}
