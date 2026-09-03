@@ -4,6 +4,56 @@ set -uo pipefail
 
 APP_ID="swaydeck"
 APP_NAME="SwayDeck"
+APP_VERSION="0.2.0-dev"
+
+usage() {
+  printf '%s\n' \
+    "Usage: swaydeck [OPTION]" \
+    "" \
+    "Keyboard-first TUI display manager for Sway." \
+    "" \
+    "Options:" \
+    "  -h, --help       Show this help and exit" \
+    "  -V, --version    Show version and exit"
+}
+
+print_version() {
+  printf '%s %s\n' "$APP_NAME" "$APP_VERSION"
+}
+
+parse_cli() {
+  if (( $# == 0 )); then
+    return 0
+  fi
+
+  if (( $# > 1 )); then
+    printf 'swaydeck: too many arguments\n\n' >&2
+    usage >&2
+    exit 2
+  fi
+
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+
+    -V|--version)
+      print_version
+      exit 0
+      ;;
+
+    *)
+      printf 'swaydeck: unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+# Handle metadata options before terminal setup, runtime state,
+# dependency checks, or communication with Sway.
+parse_cli "$@"
 # Keep a stable terminal title instead of exposing helper
 # processes such as awk/fzf in Ghostty's title bar.
 printf ']0;SwayDeck'

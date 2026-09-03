@@ -102,6 +102,29 @@ Existing unrelated `displayctl` files or symlinks are never removed.
 
 Sway and Waybar configuration are intentionally left unchanged.
 
+## Command-line options
+
+Show usage information:
+
+```bash
+swaydeck --help
+```
+
+Show the development version:
+
+```bash
+swaydeck --version
+```
+
+Short forms:
+
+```text
+-h    help
+-V    version
+```
+
+These metadata options do not require an active Sway session.
+
 ## Keyboard workflow
 
 ### Main menu
@@ -200,6 +223,12 @@ Current frozen release:
 
 ```text
 v0.1.0
+```
+
+Current development version on `main`:
+
+```text
+0.2.0-dev
 ```
 
 ## License

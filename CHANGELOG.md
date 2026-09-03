@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `--help` / `-h` command-line help
+- `--version` / `-V` version reporting
+
+### Changed
+
+- Hardened installation and uninstallation workflow
+- Added non-destructive `displayctl` compatibility handling
+- Expanded installation, uninstallation, and Waybar documentation
+
 ## v0.1.0 — 2026-09-03
 
 First public freeze of SwayDeck.
