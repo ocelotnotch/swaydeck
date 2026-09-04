@@ -157,6 +157,7 @@ Duplicate mode is not persisted because it is implemented through `wl-mirror` ra
 | `3` | Extend |
 | `4` | Second screen only |
 | `5` | Display settings |
+| `6` | Save current layout |
 | `q` | Exit |
 
 ### Extend
