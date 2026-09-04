@@ -111,7 +111,7 @@ Show usage information:
 swaydeck --help
 ```
 
-Show the development version:
+Show the current version:
 
 ```bash
 swaydeck --version
@@ -241,16 +241,22 @@ Other distributions may work but are not yet part of the tested baseline.
 
 ## Version
 
-Current frozen release:
+Latest release:
+
+```text
+v0.2.0
+```
+
+Current version on `main`:
+
+```text
+0.2.0
+```
+
+Previous release:
 
 ```text
 v0.1.0
-```
-
-Current development version on `main`:
-
-```text
-0.2.0-dev
 ```
 
 ## License

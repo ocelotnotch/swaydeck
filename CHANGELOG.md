@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0 — 2026-09-04
+
 ### Added
 
 - `--help` / `-h` command-line help
@@ -28,7 +30,7 @@ First public freeze of SwayDeck.
 - Multi-monitor positioning support
 - Per-display scale controls
 - Per-display orientation controls
-- Keyboard-first fzf TUI
+- Interactive fzf TUI
 - Tokyo Night-inspired terminal styling
 - Waybar integration
 - Super+P launcher integration

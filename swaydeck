@@ -4,7 +4,7 @@ set -uo pipefail
 
 APP_ID="swaydeck"
 APP_NAME="SwayDeck"
-APP_VERSION="0.2.0-dev"
+APP_VERSION="0.2.0"
 CLI_ACTION="tui"
 
 usage() {
