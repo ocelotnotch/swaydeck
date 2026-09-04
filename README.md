@@ -16,6 +16,7 @@ operations without requiring a full graphical display settings application.
 - Right / Left / Above / Below display topology
 - Per-display scaling
 - Landscape and portrait orientation
+- Save current layout for future Sway sessions
 - Multi-monitor aware
 - Interactive `fzf` interface
 - Terminal-native transparent background
@@ -124,6 +125,26 @@ Short forms:
 ```
 
 These metadata options do not require an active Sway session.
+
+Save the current display layout from the shell:
+
+```bash
+swaydeck --save-layout
+```
+
+## Persistent layout
+
+SwayDeck can save the current Sway output state so it is restored by Sway on future sessions.
+
+The managed file is:
+
+```text
+~/.config/sway/config.d/90-swaydeck-layout.conf
+```
+
+Saving captures active/disabled state, mode, refresh rate, scale, orientation, and position. SwayDeck validates the generated config, reloads Sway, and restores the previous managed layout if verification fails.
+
+Duplicate mode is not persisted because it is implemented through `wl-mirror` rather than native Sway output mirroring.
 
 ## Keyboard workflow
 

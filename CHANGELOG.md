@@ -6,6 +6,7 @@
 
 - `--help` / `-h` command-line help
 - `--version` / `-V` version reporting
+- Persistent current-layout saving through the TUI or `--save-layout`
 
 ### Changed
 

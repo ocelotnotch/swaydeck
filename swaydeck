@@ -5,16 +5,18 @@ set -uo pipefail
 APP_ID="swaydeck"
 APP_NAME="SwayDeck"
 APP_VERSION="0.2.0-dev"
+CLI_ACTION="tui"
 
 usage() {
   printf '%s\n' \
     "Usage: swaydeck [OPTION]" \
     "" \
-    "Keyboard-first TUI display manager for Sway." \
+    "TUI display manager for Sway." \
     "" \
     "Options:" \
     "  -h, --help       Show this help and exit" \
-    "  -V, --version    Show version and exit"
+    "  -V, --version    Show version and exit" \
+    "      --save-layout Save current layout and reload Sway"
 }
 
 print_version() {
@@ -43,6 +45,11 @@ parse_cli() {
       exit 0
       ;;
 
+    --save-layout)
+      CLI_ACTION="save-layout"
+      return 0
+      ;;
+
     *)
       printf 'swaydeck: unknown option: %s\n\n' "$1" >&2
       usage >&2
@@ -60,6 +67,10 @@ printf ']0;SwayDeck'
 
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/${APP_ID}-${UID}"
 PID_FILE="$STATE_DIR/wl-mirror.pids"
+
+SWAY_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/sway"
+SWAYDECK_LAYOUT_FILE="$SWAY_CONFIG_DIR/config.d/90-swaydeck-layout.conf"
+SWAYDECK_BACKUP_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/swaydeck-backups"
 
 mkdir -p "$STATE_DIR"
 
@@ -311,6 +322,249 @@ transform_output() {
 
   sway_cmd \
     "output $output transform $transform"
+}
+
+# ------------------------------------------------------------
+# Persistent layout
+# ------------------------------------------------------------
+
+layout_signature() {
+  jq -S -c '
+    map(
+      {
+        name,
+        active,
+        state:
+          (
+            if .active == true then
+              {
+                width: .current_mode.width,
+                height: .current_mode.height,
+                refresh: .current_mode.refresh,
+                scale,
+                transform: (.transform // "normal"),
+                x: .rect.x,
+                y: .rect.y
+              }
+            else
+              null
+            end
+          )
+      }
+    )
+    | sort_by(.name)
+  '
+}
+
+generate_layout_config() {
+  local data="$1"
+
+  jq -e '
+    all(
+      .[];
+      (
+        (.name | test("^[A-Za-z0-9._:-]+$"))
+        and
+        (
+          (.active != true)
+          or
+          (
+            .current_mode != null
+            and (.rect.x != null)
+            and (.rect.y != null)
+            and (.scale != null)
+          )
+        )
+      )
+    )
+  ' <<<"$data" >/dev/null || return 1
+
+  printf '%s\n' \
+    '# Managed by SwayDeck.' \
+    '# Use "Save current layout" or swaydeck --save-layout to update.' \
+    '# Manual edits may be overwritten.' \
+    ''
+
+  jq -r '
+    .[]
+    |
+    if .active == true then
+      "output "
+      + .name
+      + " mode "
+      + (.current_mode.width|tostring)
+      + "x"
+      + (.current_mode.height|tostring)
+      + "@"
+      + ((.current_mode.refresh / 1000)|tostring)
+      + "Hz"
+      + " scale "
+      + (.scale|tostring)
+      + " transform "
+      + (.transform // "normal")
+      + " position "
+      + (.rect.x|tostring)
+      + " "
+      + (.rect.y|tostring)
+    else
+      "output "
+      + .name
+      + " disable"
+    end
+  ' <<<"$data"
+}
+
+restore_layout_file() {
+  local previous="$1"
+  local existed="$2"
+
+  if (( existed == 1 )); then
+    install -Dm0644 \
+      "$previous" \
+      "$SWAYDECK_LAYOUT_FILE"
+  else
+    rm -f "$SWAYDECK_LAYOUT_FILE"
+  fi
+}
+
+save_current_layout() {
+  local data
+  local after
+  local before_signature
+  local after_signature
+
+  local candidate
+  local previous
+
+  local previous_existed=0
+  local persistent_backup=""
+
+  if mirror_alive; then
+    LAST_ERROR="Duplicate mode cannot be persisted with wl-mirror"
+    STATUS="Switch out of Duplicate before saving layout"
+    return 1
+  fi
+
+  data="$(outputs_json)" || {
+    LAST_ERROR="Unable to read current Sway outputs"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  }
+
+  jq -e '
+    type == "array"
+    and length > 0
+    and any(.[]; .active == true)
+  ' <<<"$data" >/dev/null || {
+    LAST_ERROR="No active outputs detected"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  }
+
+  before_signature="$(
+    layout_signature <<<"$data"
+  )"
+
+  mkdir -p \
+    "$(dirname "$SWAYDECK_LAYOUT_FILE")" \
+    "$SWAYDECK_BACKUP_DIR"
+
+  candidate="$(mktemp "$STATE_DIR/layout.XXXXXX")"
+  previous="$(mktemp "$STATE_DIR/layout-previous.XXXXXX")"
+
+  if [[ -e "$SWAYDECK_LAYOUT_FILE" ]]; then
+    previous_existed=1
+
+    cp -a \
+      "$SWAYDECK_LAYOUT_FILE" \
+      "$previous"
+
+    persistent_backup="$SWAYDECK_BACKUP_DIR/layout-$(date +%Y%m%d-%H%M%S)-$$.conf"
+
+    cp -a \
+      "$SWAYDECK_LAYOUT_FILE" \
+      "$persistent_backup"
+  fi
+
+  if ! generate_layout_config "$data" > "$candidate"; then
+    rm -f "$candidate" "$previous"
+
+    LAST_ERROR="Current output state cannot be serialized safely"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  if command -v sway >/dev/null 2>&1; then
+    if ! sway -C -c "$candidate" >/dev/null 2>&1; then
+      rm -f "$candidate" "$previous"
+
+      LAST_ERROR="Generated Sway layout failed syntax validation"
+      STATUS="ERROR: $LAST_ERROR"
+      return 1
+    fi
+  fi
+
+  install -Dm0644 \
+    "$candidate" \
+    "${SWAYDECK_LAYOUT_FILE}.new"
+
+  mv -f \
+    "${SWAYDECK_LAYOUT_FILE}.new" \
+    "$SWAYDECK_LAYOUT_FILE"
+
+  rm -f "$candidate"
+
+  if ! swaymsg reload >/dev/null 2>&1; then
+    restore_layout_file \
+      "$previous" \
+      "$previous_existed"
+
+    swaymsg reload >/dev/null 2>&1 || true
+    rm -f "$previous"
+
+    LAST_ERROR="Sway reload failed; previous layout restored"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  sleep 0.5
+
+  after="$(outputs_json)" || {
+    restore_layout_file \
+      "$previous" \
+      "$previous_existed"
+
+    swaymsg reload >/dev/null 2>&1 || true
+    rm -f "$previous"
+
+    LAST_ERROR="Unable to verify layout after reload; previous layout restored"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  }
+
+  after_signature="$(
+    layout_signature <<<"$after"
+  )"
+
+  if [[ "$before_signature" != "$after_signature" ]]; then
+    restore_layout_file \
+      "$previous" \
+      "$previous_existed"
+
+    swaymsg reload >/dev/null 2>&1 || true
+    rm -f "$previous"
+
+    LAST_ERROR="Reload changed the display state; previous layout restored"
+    STATUS="ERROR: $LAST_ERROR"
+    return 1
+  fi
+
+  rm -f "$previous"
+
+  STATUS="✓ Current layout saved"
+  notify "Current display layout saved"
+
+  return 0
 }
 
 # ------------------------------------------------------------
@@ -1664,6 +1918,7 @@ main() {
         '3  Extend' \
         '4  Second screen only' \
         '5  Display settings' \
+        '6  Save current layout' \
         'q  Exit'
     )" || exit 0
 
@@ -1691,6 +1946,10 @@ main() {
         display_settings
         ;;
 
+      6)
+        save_current_layout
+        ;;
+
       q)
         exit 0
         ;;
@@ -1707,5 +1966,17 @@ main() {
 
   done
 }
+
+if [[ "$CLI_ACTION" == "save-layout" ]]; then
+  if save_current_layout; then
+    printf '%s
+' "$STATUS"
+    exit 0
+  fi
+
+  printf '%s
+' "$STATUS" >&2
+  exit 1
+fi
 
 main
