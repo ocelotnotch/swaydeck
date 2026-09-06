@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Optional event-driven Waybar indicator for Sway outputs (Python stdlib only)."""
+import argparse
+import html
+import json
+import signal
+import subprocess
+import sys
+
+
+def format_outputs(outputs):
+    count = sum(bool(output.get("active")) for output in outputs)
+    lines = ["SwayDeck", f"{count} active display{'s' if count != 1 else ''}"]
+    for output in outputs:
+        active = bool(output.get("active"))
+        name = html.escape(output.get("name", "?"))
+        line = f"{name} · {'Active' if active else 'Inactive'}"
+        mode = output.get("current_mode")
+        if active and mode:
+            hz = mode.get("refresh", 0) / 1000
+            line += f" · {mode['width']}×{mode['height']} · {hz:.0f} Hz"
+        lines.append(line)
+    return {
+        "text": "\uf108" + (f" {count}" if count > 1 else ""),
+        "tooltip": "\n".join(lines),
+        "class": "multiple" if count > 1 else "single",
+    }
+
+
+def snapshot():
+    result = subprocess.run(
+        ["swaymsg", "-r", "-t", "get_outputs"],
+        check=True, capture_output=True, text=True, timeout=5,
+    )
+    return json.dumps(format_outputs(json.loads(result.stdout)), ensure_ascii=False)
+
+
+def stop(_signum, _frame):
+    raise SystemExit(0)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--once", action="store_true", help="print one JSON snapshot and exit")
+    args = parser.parse_args()
+    if args.once:
+        print(snapshot(), flush=True)
+        return
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    proc = subprocess.Popen(
+        ["swaymsg", "-m", "-r", "-t", "subscribe", '["output"]'],
+        stdout=subprocess.PIPE, text=True, bufsize=1,
+    )
+    try:
+        previous = snapshot()
+        print(previous, flush=True)
+        for line in proc.stdout:
+            event = json.loads(line)
+            if event.get("success") is False:
+                raise RuntimeError("Sway output subscription failed")
+            current = snapshot()
+            if current != previous:
+                print(current, flush=True)
+                previous = current
+        raise RuntimeError("Sway output subscription disconnected")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        proc.stdout.close()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        sys.exit(0)
+    except Exception as exc:
+        print(f"swaydeck-waybar: {exc}", file=sys.stderr)
+        sys.exit(1)

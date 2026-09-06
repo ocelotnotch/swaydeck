@@ -194,22 +194,63 @@ display relationship after scale or orientation changes.
 
 ## Waybar
 
-An example Waybar module and CSS are provided under:
+The optional indicator shows a monitor icon and adds a count only when more
+than one Sway output is active. Its tooltip lists output names, active/inactive
+status, and the current resolution and refresh rate for active outputs.
 
-```text
-examples/
+| Active layout | Indicator |
+| --- | --- |
+| Laptop only | Icon |
+| Laptop and one external display | Icon + 2 |
+| Laptop and two external displays | Icon + 3 |
+| External display only, laptop output disabled | Icon |
+
+This counts active Sway outputs, not connected cables or unique desktop images.
+Duplicate mode still counts both active outputs. Disconnected outputs may disappear
+from the tooltip; a connected, disabled output is listed when Sway reports it.
+
+### Install the optional helper
+
+Requires Python 3, `swaymsg`, Waybar, and a running Sway session. It uses only the
+Python standard library. From the repository root:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+install -m 0755 contrib/waybar/swaydeck-waybar "$HOME/.local/bin/swaydeck-waybar"
 ```
 
-The module can launch SwayDeck through Ghostty:
+The main installer does not install this optional helper. Back up an existing
+helper before replacing it. Back up your Waybar config before editing it, then
+merge `custom/swaydeck` from [examples/waybar.jsonc](examples/waybar.jsonc)
+into your existing config and add its name to the desired module list. Do not
+replace your entire config with the example. Optional styling is in
+[examples/waybar.css](examples/waybar.css).
 
-```json
-"custom/swaydeck": {
-  "format": "\uf108",
-  "tooltip": true,
-  "tooltip-format": "SwayDeck  •  Super+P",
-  "on-click": "ghostty -e ~/.local/bin/swaydeck"
-}
+The example click action uses Ghostty; change it to your terminal's launch syntax
+if needed. The icon requires Font Awesome or a compatible Nerd Font.
+
+The helper prints an initial snapshot and then listens for Sway output events.
+It does not poll periodically. A small listener process stays resident; Waybar
+restarts it after three seconds if it exits. Do not add an `interval` alongside
+this streaming configuration. Tooltips describe the current state, not history.
+
+Test one snapshot and reload a running Waybar:
+
+```bash
+python3 "$HOME/.local/bin/swaydeck-waybar" --once
+pkill -USR2 -u "$(id -u)" -x waybar
 ```
+
+Check the tooltip and click action, then activate/deactivate an external output
+to verify that the count changes. Run the fixture tests without Sway using:
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+To remove the integration, remove the module entry and definition from your
+Waybar config, reload Waybar, and delete `~/.local/bin/swaydeck-waybar`.
+The main SwayDeck uninstaller leaves this optional helper unchanged.
 
 ## Sway binding
 

@@ -2,11 +2,13 @@
   "modules-right": [
     "custom/swaydeck"
   ],
-
   "custom/swaydeck": {
-    "format": "\uf108",
+    "exec": "exec python3 \"$HOME/.local/bin/swaydeck-waybar\"",
+    "return-type": "json",
+    "format": "{}",
     "tooltip": true,
-    "tooltip-format": "SwayDeck  •  Super+P",
+    "restart-interval": 3,
+    "exec-on-event": false,
     "on-click": "ghostty -e ~/.local/bin/swaydeck"
   }
 }
