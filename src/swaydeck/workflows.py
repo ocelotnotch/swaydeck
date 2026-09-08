@@ -100,6 +100,42 @@ def apply_second_only(
     return operations
 
 
+def apply_enable_all(
+    *,
+    primary_override: str | None = None,
+    settle_seconds: float = DEFAULT_SETTLE_SECONDS,
+) -> list[OutputOperation]:
+    """Enable all reported outputs without changing their positions."""
+
+    if settle_seconds < 0:
+        raise ValueError(
+            "settle_seconds must not be negative"
+        )
+
+    outputs = get_outputs()
+
+    _resolve_primary(
+        outputs,
+        primary_override,
+    )
+
+    operations: list[OutputOperation] = [
+        EnableOp(output.name)
+        for output in outputs
+    ]
+
+    execute_operations(
+        operations
+    )
+
+    if settle_seconds:
+        time.sleep(
+            settle_seconds
+        )
+
+    return operations
+
+
 def apply_extend_right(
     *,
     primary_override: str | None = None,

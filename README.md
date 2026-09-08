@@ -303,3 +303,32 @@ v0.1.0
 ## License
 
 MIT
+
+## Python architecture
+
+The v0.3 development line migrates the SwayDeck runtime from the original
+Bash monolith to a modular Python architecture.
+
+Runtime layers:
+
+- `models.py`: typed Sway output state
+- `topology.py`: pure topology logic
+- `plans.py`: deterministic display-operation plans
+- `executor.py`: plan execution
+- `sway.py`: Sway IPC boundary
+- `workflows.py`: projection workflows
+- `mirror.py`: wl-mirror lifecycle
+- `settings.py`: scale and orientation workflows
+- `layout.py`: persistent layout, backup, verification and rollback
+- `ui.py`: fzf TUI
+- `cli.py`: command-line entry point
+
+The previous Bash implementation is retained byte-for-byte at
+`legacy/swaydeck.bash` during the Python cutover.
+
+Repository-local commands remain:
+
+    ./swaydeck
+    ./swaydeck --help
+    ./swaydeck --version
+    ./swaydeck --save-layout
