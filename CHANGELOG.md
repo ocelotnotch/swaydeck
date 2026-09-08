@@ -4,6 +4,12 @@ All notable changes to SwayDeck are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Improve TUI readability by inheriting the terminal foreground for normal text
+  while keeping the transparent background and using brighter Tokyo Night
+  accents for selection, highlights, prompts, headers, and borders
+
 ## v0.3.2 — 2026-09-08
 
 ### Fixed
