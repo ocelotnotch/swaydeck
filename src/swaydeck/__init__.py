@@ -1,6 +1,10 @@
 """Core Python components for SwayDeck."""
 
 from .models import Output, Rect
+from .executor import (
+    execute_operation,
+    execute_operations,
+)
 from .plans import (
     DisableOp,
     EnableOp,
@@ -41,6 +45,8 @@ __all__ = [
     "SwayError",
     "SwayProtocolError",
     "disable_output",
+    "execute_operation",
+    "execute_operations",
     "enable_output",
     "get_outputs",
     "plan_arrange_multi",
