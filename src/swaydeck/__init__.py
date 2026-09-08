@@ -5,6 +5,7 @@ from .mirror import (
     MirrorError,
     default_pid_file,
     mirror_alive,
+    require_wl_mirror,
     start_mirror,
     stop_mirror,
 )
@@ -37,6 +38,7 @@ from .sway import (
 )
 from .workflows import (
     WorkflowError,
+    apply_duplicate,
     apply_extend_right,
     apply_pc_only,
     apply_second_only,
@@ -60,12 +62,14 @@ __all__ = [
     "SwayError",
     "SwayProtocolError",
     "WorkflowError",
+    "apply_duplicate",
     "apply_extend_right",
     "apply_pc_only",
     "apply_second_only",
     "arrange_displays",
     "default_pid_file",
     "mirror_alive",
+    "require_wl_mirror",
     "start_mirror",
     "stop_mirror",
     "disable_output",

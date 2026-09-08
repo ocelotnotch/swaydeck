@@ -6,6 +6,11 @@ import time
 
 from .executor import execute_operations
 from .models import Output
+from .mirror import (
+    require_wl_mirror,
+    start_mirror,
+    stop_mirror,
+)
 from .plans import (
     EnableOp,
     OutputOperation,
@@ -207,3 +212,45 @@ def arrange_displays(
     )
 
     return operations
+
+def apply_duplicate(
+    *,
+    primary_override: str | None = None,
+    settle_seconds: float = DEFAULT_SETTLE_SECONDS,
+    verify_delay: float = 0.2,
+) -> tuple[int, ...]:
+    """Mirror the primary output onto all external outputs."""
+
+    stop_mirror()
+
+    # Do not mutate display topology if wl-mirror is unavailable.
+    require_wl_mirror()
+
+    outputs = get_outputs()
+
+    primary = _resolve_primary(
+        outputs,
+        primary_override,
+    )
+
+    externals = tuple(
+        output.name
+        for output in outputs
+        if output.name != primary
+    )
+
+    if not externals:
+        raise WorkflowError(
+            "no external outputs detected"
+        )
+
+    apply_extend_right(
+        primary_override=primary,
+        settle_seconds=settle_seconds,
+    )
+
+    return start_mirror(
+        primary,
+        externals,
+        verify_delay=verify_delay,
+    )

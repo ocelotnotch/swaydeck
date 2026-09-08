@@ -150,6 +150,19 @@ def _cleanup_started_processes(
         except OSError:
             pass
 
+def require_wl_mirror() -> str:
+    """Return the wl-mirror executable or raise a clear error."""
+
+    binary = shutil.which(
+        "wl-mirror"
+    )
+
+    if binary is None:
+        raise MirrorError(
+            "wl-mirror is not installed or not available in PATH"
+        )
+
+    return binary
 
 def start_mirror(
     primary: str,
@@ -176,14 +189,7 @@ def start_mirror(
             "verify_delay must not be negative"
         )
 
-    binary = shutil.which(
-        "wl-mirror"
-    )
-
-    if binary is None:
-        raise MirrorError(
-            "wl-mirror is not installed or not available in PATH"
-        )
+    binary = require_wl_mirror()
 
     path = (
         pid_file

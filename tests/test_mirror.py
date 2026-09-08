@@ -12,6 +12,7 @@ sys.path.insert(0, str(SRC))
 from swaydeck import (
     MirrorError,
     mirror_alive,
+    require_wl_mirror,
     start_mirror,
     stop_mirror,
 )
@@ -267,6 +268,39 @@ class StartMirrorTests(unittest.TestCase):
                 ["HDMI-A-1"],
                 verify_delay=-1,
             )
+
+
+class RequireMirrorTests(unittest.TestCase):
+    @patch(
+        "swaydeck.mirror.shutil.which",
+        return_value="/usr/bin/wl-mirror",
+    )
+    def test_available_binary_is_returned(
+        self,
+        which,
+    ):
+        self.assertEqual(
+            require_wl_mirror(),
+            "/usr/bin/wl-mirror",
+        )
+
+        which.assert_called_once_with(
+            "wl-mirror"
+        )
+
+    @patch(
+        "swaydeck.mirror.shutil.which",
+        return_value=None,
+    )
+    def test_missing_binary_is_rejected(
+        self,
+        which,
+    ):
+        with self.assertRaisesRegex(
+            MirrorError,
+            "not installed",
+        ):
+            require_wl_mirror()
 
 
 if __name__ == "__main__":
