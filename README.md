@@ -29,8 +29,7 @@ operations without requiring a full graphical display settings application.
 ### Core
 
 - Sway
-- Bash
-- `jq`
+- Python 3.10 or newer
 - `fzf`
 
 ### Duplicate mode
@@ -47,7 +46,7 @@ operations without requiring a full graphical display settings application.
 ## Fedora
 
 ```bash
-sudo dnf install fzf jq wl-mirror
+sudo dnf install python3 fzf wl-mirror
 ```
 
 ## Installation
@@ -60,11 +59,19 @@ cd swaydeck
 ./install.sh
 ```
 
-The installer places SwayDeck at:
+The installer stores the managed Python runtime at:
+
+```text
+~/.local/share/swaydeck/
+```
+
+and exposes the launcher at:
 
 ```text
 ~/.local/bin/swaydeck
 ```
+
+No Python site-packages or virtual environment are modified.
 
 When `~/.local/bin/displayctl` is unused, the installer also creates a
 compatibility symlink:
@@ -97,7 +104,7 @@ From the cloned repository:
 ./uninstall.sh
 ```
 
-The uninstaller removes the SwayDeck executable and its compatibility symlink when applicable.
+The uninstaller removes the managed Python runtime, launcher, and its compatibility symlink when applicable.
 
 Existing unrelated `displayctl` files or symlinks are never removed.
 
@@ -285,19 +292,19 @@ Other distributions may work but are not yet part of the tested baseline.
 Latest release:
 
 ```text
-v0.2.0
+v0.3.1
 ```
 
 Current version on `main`:
 
 ```text
-0.2.0
+0.3.1
 ```
 
 Previous release:
 
 ```text
-v0.1.0
+v0.3.0
 ```
 
 ## License
@@ -306,8 +313,8 @@ MIT
 
 ## Python architecture
 
-The v0.3 development line migrates the SwayDeck runtime from the original
-Bash monolith to a modular Python architecture.
+The v0.3 release line uses a modular Python runtime, replacing the original
+Bash monolith while preserving its behavior as the migration reference.
 
 Runtime layers:
 
@@ -324,7 +331,8 @@ Runtime layers:
 - `cli.py`: command-line entry point
 
 The previous Bash implementation is retained byte-for-byte at
-`legacy/swaydeck.bash` during the Python cutover.
+`legacy/swaydeck.bash` as a rollback and behavioral reference for the v0.3
+release cycle.
 
 Repository-local commands remain:
 

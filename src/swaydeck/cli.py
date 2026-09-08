@@ -13,7 +13,7 @@ from .ui import run_tui
 
 
 APP_NAME = "SwayDeck"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 
 
 def usage() -> str:

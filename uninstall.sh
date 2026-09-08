@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 BIN_DIR="$HOME/.local/bin"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+APP_DIR="$DATA_HOME/swaydeck"
 DEST="$BIN_DIR/swaydeck"
-LEGACY="$BIN_DIR/displayctl"
+COMPAT="$BIN_DIR/displayctl"
 
-if [[ -L "$LEGACY" ]]; then
-    LEGACY_TARGET="$(readlink -f -- "$LEGACY" 2>/dev/null || true)"
-
-    if [[ "$LEGACY_TARGET" == "$DEST" ]]; then
-        rm -f -- "$LEGACY"
-        echo "✓ Removed compatibility link: $LEGACY"
-    else
-        echo "Existing compatibility path left unchanged:"
-        echo "  $LEGACY"
-    fi
+if [[ -L "$COMPAT" ]]; then
+  TARGET="$(readlink -- "$COMPAT" 2>/dev/null || true)"
+  [[ "$TARGET" == "$DEST" ]] && { rm -f "$COMPAT"; echo "✓ Removed compatibility link: $COMPAT"; }
 fi
-
-if [[ -e "$DEST" || -L "$DEST" ]]; then
-    rm -f -- "$DEST"
-    echo "✓ Removed: $DEST"
-else
-    echo "SwayDeck is not installed at:"
-    echo "  $DEST"
+if [[ -L "$DEST" ]]; then
+  TARGET="$(readlink -f -- "$DEST" 2>/dev/null || true)"
+  EXPECTED="$(readlink -f -- "$APP_DIR/swaydeck" 2>/dev/null || true)"
+  [[ -n "$EXPECTED" && "$TARGET" == "$EXPECTED" ]] && { rm -f "$DEST"; echo "✓ Removed launcher: $DEST"; }
+elif [[ -f "$DEST" ]] && grep -q 'SwayDeck' "$DEST" 2>/dev/null; then
+  rm -f "$DEST"; echo "✓ Removed legacy launcher: $DEST"
 fi
-
-echo
-echo "Waybar and Sway configuration are intentionally left unchanged."
+[[ -d "$APP_DIR" ]] && { rm -rf "$APP_DIR"; echo "✓ Removed runtime: $APP_DIR"; }
+echo 'Sway/Waybar config, saved layouts, and backups were left unchanged.'
