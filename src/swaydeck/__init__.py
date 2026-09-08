@@ -1,6 +1,13 @@
 """Core Python components for SwayDeck."""
 
 from .models import Output, Rect
+from .mirror import (
+    MirrorError,
+    default_pid_file,
+    mirror_alive,
+    start_mirror,
+    stop_mirror,
+)
 from .executor import (
     execute_operation,
     execute_operations,
@@ -44,6 +51,7 @@ from .topology import (
 __all__ = [
     "DisableOp",
     "EnableOp",
+    "MirrorError",
     "Output",
     "OutputOperation",
     "PositionOp",
@@ -56,6 +64,10 @@ __all__ = [
     "apply_pc_only",
     "apply_second_only",
     "arrange_displays",
+    "default_pid_file",
+    "mirror_alive",
+    "start_mirror",
+    "stop_mirror",
     "disable_output",
     "execute_operation",
     "execute_operations",
