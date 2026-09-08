@@ -28,6 +28,13 @@ from .sway import (
     scale_output,
     transform_output,
 )
+from .workflows import (
+    WorkflowError,
+    apply_extend_right,
+    apply_pc_only,
+    apply_second_only,
+    arrange_displays,
+)
 from .topology import (
     projection_mode,
     select_primary,
@@ -44,6 +51,11 @@ __all__ = [
     "SwayCommandError",
     "SwayError",
     "SwayProtocolError",
+    "WorkflowError",
+    "apply_extend_right",
+    "apply_pc_only",
+    "apply_second_only",
+    "arrange_displays",
     "disable_output",
     "execute_operation",
     "execute_operations",
