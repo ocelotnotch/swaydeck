@@ -1,6 +1,17 @@
 """Core Python components for SwayDeck."""
 
 from .models import Output, Rect
+from .plans import (
+    DisableOp,
+    EnableOp,
+    OutputOperation,
+    PositionOp,
+    plan_arrange_multi,
+    plan_arrange_two,
+    plan_pc_only,
+    plan_right_chain,
+    plan_second_only,
+)
 from .sway import (
     SwayCommandError,
     SwayError,
@@ -20,7 +31,11 @@ from .topology import (
 )
 
 __all__ = [
+    "DisableOp",
+    "EnableOp",
     "Output",
+    "OutputOperation",
+    "PositionOp",
     "Rect",
     "SwayCommandError",
     "SwayError",
@@ -28,6 +43,11 @@ __all__ = [
     "disable_output",
     "enable_output",
     "get_outputs",
+    "plan_arrange_multi",
+    "plan_arrange_two",
+    "plan_pc_only",
+    "plan_right_chain",
+    "plan_second_only",
     "position_output",
     "projection_mode",
     "run_sway_command",
