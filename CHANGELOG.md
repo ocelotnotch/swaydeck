@@ -4,6 +4,29 @@ All notable changes to SwayDeck are documented in this file.
 
 ## Unreleased
 
+## v0.3.2 — 2026-09-08
+
+### Fixed
+
+- Hardened installer rollback so a failed staged validation cannot remove an
+  existing working SwayDeck installation
+- Track installation transaction state explicitly before removing or restoring
+  managed runtime and launcher paths
+- Hardened compatibility-link cleanup in the uninstaller
+
+### Added
+
+- Installer/uninstaller integration regression tests
+- Regression coverage proving a failed staged upgrade preserves the existing
+  runtime and launcher
+- Release metadata consistency checks
+- GitHub Actions CI across Python 3.10, 3.12, and 3.14
+
+### Changed
+
+- Document Sway's `swaymsg` command explicitly as part of the core requirement
+- Refresh the tested baseline documentation for the v0.3 Python runtime
+
 ## v0.3.1 — 2026-09-08
 
 ### Fixed
@@ -14,7 +37,6 @@ All notable changes to SwayDeck are documented in this file.
 - Removed the obsolete `jq` runtime requirement from the main installer
 - Added Python 3.10+ runtime validation
 - Updated the uninstaller for the managed Python runtime
-- Added installer and uninstaller regression coverage
 
 ### Changed
 

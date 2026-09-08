@@ -28,7 +28,7 @@ operations without requiring a full graphical display settings application.
 
 ### Core
 
-- Sway
+- Sway (`swaymsg`)
 - Python 3.10 or newer
 - `fzf`
 
@@ -277,11 +277,12 @@ display fullscreen on the external output.
 
 ## Tested baseline
 
-Initial development and testing:
+SwayDeck v0.3.x has been developed and live-tested on:
 
 - Fedora 44
-- Sway
-- Wayland
+- Sway / Wayland
+- internal eDP display
+- external HDMI display
 - Ghostty
 - Waybar
 
@@ -292,19 +293,19 @@ Other distributions may work but are not yet part of the tested baseline.
 Latest release:
 
 ```text
-v0.3.1
+v0.3.2
 ```
 
 Current version on `main`:
 
 ```text
-0.3.1
+0.3.2
 ```
 
 Previous release:
 
 ```text
-v0.3.0
+v0.3.1
 ```
 
 ## License

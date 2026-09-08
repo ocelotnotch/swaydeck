@@ -32,7 +32,7 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "SwayDeck 0.3.1",
+            "SwayDeck 0.3.2",
             output.getvalue(),
         )
 
