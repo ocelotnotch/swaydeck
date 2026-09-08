@@ -52,6 +52,13 @@ All notable changes to SwayDeck are documented in this file.
 
 ## v0.3.0 — 2026-09-08
 
+### Breaking Changes
+
+- The primary runtime now requires Python 3.10 or newer
+- The primary runtime moved from Bash to Python
+- `jq` is no longer required by the primary runtime
+- Existing SwayDeck workflows and command-line entry points are preserved
+
 ### Added
 
 - Modular Python runtime
